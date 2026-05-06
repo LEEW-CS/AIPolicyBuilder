@@ -1,0 +1,1678 @@
+<!doctype html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════
+  Cloudstaff AI Policy Builder — v1 r1 · build 2026-05-06
+  Single-file widget. See POLICY_BUILDER.md for architecture & change log.
+
+  Live URL (planned):  https://policybuilder.cloudstaff.ai
+  Repository:          https://github.com/LEEW-CS/AIPolicyBuilder
+
+  TABLE OF CONTENTS (line numbers approximate — regenerate after big edits)
+  ─── HEAD / BOOT ──────────────────────────────────────────────
+    ~70    <head> · fonts · CDN scripts (jspdf, docx)
+  ─── CSS ──────────────────────────────────────────────────────
+    ~85    Brand tokens (CSS custom properties — replace with exact
+           Cloudstaff hex values once confirmed)
+    ~110   Page chrome (logo header — hidden when embedded)
+    ~135   Widget root + progress bar
+    ~175   Question card · section tag · titles
+    ~210   Cards (single-select tiles)
+    ~245   Chips (multi-select)
+    ~265   Segmented control
+    ~295   Inputs · textarea · field labels
+    ~325   Footer nav · primary/ghost/link buttons
+    ~360   Welcome screen
+    ~410   Done screen · download buttons · preview box · Calendly stub
+  ─── HTML ─────────────────────────────────────────────────────
+    ~480   <header> page chrome
+    ~485   #cs-policy-builder — widget root element
+  ─── JS ───────────────────────────────────────────────────────
+    ~490   STEPS — full question schema (welcome → intake → 5 sections
+           → specifics → confirm → done) with branching predicates
+    ~720   STATE — answers, current step, email confirmed
+    ~735   visibleSteps() — branching engine
+    ~745   render() — step dispatcher
+    ~780   renderWelcome / renderMulti / renderCards / renderChips /
+           renderSegmented / renderConfirm / renderDone
+    ~960   attachHandlers() — click + input bindings
+    ~1010  goNext / goBack / validateStep
+    ~1070  submitToHubSpot() — STUB (logs payload to console)
+    ~1080  Helpers — escape, has, any
+    ~1095  buildPolicySections() — main policy template engine
+    ~1220  ownerName / countriesPhrase / sensitiveList — string helpers
+    ~1250  rolesBody / acceptableUseBody / approvalBody /
+           personalAccountBody / dataHandlingBody / complianceBody /
+           trainingBody / monitoringBody / frameworkBody — section
+           builders, each consuming the answers object
+    ~1510  downloadPDF() — jsPDF generator (paginates A4)
+    ~1570  downloadDOCX() — docx UMD generator (Word-editable)
+    ~1610  Boot — render()
+
+  Stubs (replace with real backend in production):
+    submitToHubSpot()        → POST → policybuilder.cloudstaff.ai/api/lead
+                                 → Cloudflare Worker → HubSpot Forms API
+    Calendly button (Done)   → opens calendly.com/cloudstaff-ai-* URLs
+                                 (replace with real org Calendly routes)
+
+  Before pushing:  scripts/validate.ps1 [path\to\index.html]
+  (checks JS syntax via `node --check` + div-nesting balance)
+  ═══════════════════════════════════════════════════════════════════════
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cloudstaff AI Policy Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<style>
+  /* ============================================================
+     Cloudstaff AI Policy Builder — preview build
+     Single-file widget. Scoped to #cs-policy-builder so it can
+     be dropped into any page with <div id="cs-policy-builder"></div>.
+     Brand colours below are approximate — replace with the exact
+     Cloudstaff hex values once confirmed.
+     ============================================================ */
+  :root {
+    --cs-primary: #0B5FFF;
+    --cs-primary-dark: #003FB3;
+    --cs-accent: #00C2D7;
+    --cs-ink: #0B1B3A;
+    --cs-text: #1F2937;
+    --cs-muted: #6B7280;
+    --cs-bg: #F4F7FB;
+    --cs-card: #FFFFFF;
+    --cs-border: #E5EAF1;
+    --cs-border-strong: #C9D2DF;
+    --cs-success: #10B981;
+    --cs-danger: #EF4444;
+    --cs-shadow: 0 1px 2px rgba(11,27,58,.04), 0 8px 24px rgba(11,27,58,.06);
+    --cs-shadow-lg: 0 12px 40px rgba(11,27,58,.12);
+    --cs-radius: 12px;
+    --cs-radius-sm: 8px;
+  }
+  html, body { margin: 0; padding: 0; background: var(--cs-bg); }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--cs-text); }
+
+  /* Page chrome (only used when this file is opened standalone — embed mode hides it) */
+  .page-header {
+    background: #fff;
+    border-bottom: 1px solid var(--cs-border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .page-header img { height: 32px; }
+  .page-header .preview-badge {
+    margin-left: auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--cs-muted);
+    background: var(--cs-bg);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+
+  /* === Widget root === */
+  #cs-policy-builder {
+    max-width: 880px;
+    margin: 32px auto 64px;
+    padding: 0 16px;
+  }
+  #cs-policy-builder *, #cs-policy-builder *::before, #cs-policy-builder *::after { box-sizing: border-box; }
+
+  /* Progress */
+  .cs-progress-wrap {
+    background: var(--cs-card);
+    border: 1px solid var(--cs-border);
+    border-radius: var(--cs-radius);
+    padding: 18px 24px;
+    margin-bottom: 16px;
+    box-shadow: var(--cs-shadow);
+  }
+  .cs-progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .cs-progress-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--cs-muted);
+    font-weight: 600;
+  }
+  .cs-progress-step { font-size: 13px; color: var(--cs-text); font-weight: 500; }
+  .cs-progress-bar {
+    height: 6px;
+    background: var(--cs-border);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .cs-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cs-primary) 0%, var(--cs-accent) 100%);
+    transition: width .3s ease;
+    width: 0%;
+  }
+
+  /* Card container */
+  .cs-card {
+    background: var(--cs-card);
+    border: 1px solid var(--cs-border);
+    border-radius: var(--cs-radius);
+    box-shadow: var(--cs-shadow);
+    padding: 36px 40px;
+  }
+  @media (max-width: 600px) {
+    .cs-card { padding: 24px 20px; }
+  }
+
+  .cs-section-tag {
+    display: inline-block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--cs-primary);
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .cs-q-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--cs-ink);
+    line-height: 1.3;
+    margin: 0 0 8px;
+  }
+  .cs-q-help {
+    color: var(--cs-muted);
+    font-size: 15px;
+    margin: 0 0 28px;
+    line-height: 1.55;
+  }
+
+  /* Cards (single-select tiles) */
+  .cs-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .cs-cards.two-col { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 600px) { .cs-cards.two-col { grid-template-columns: 1fr; } }
+  .cs-card-opt {
+    text-align: left;
+    background: #fff;
+    border: 1.5px solid var(--cs-border);
+    border-radius: var(--cs-radius-sm);
+    padding: 16px 18px;
+    cursor: pointer;
+    transition: all .15s ease;
+    font-family: inherit;
+    color: var(--cs-text);
+  }
+  .cs-card-opt:hover {
+    border-color: var(--cs-primary);
+    background: #F5F9FF;
+    transform: translateY(-1px);
+  }
+  .cs-card-opt.selected {
+    border-color: var(--cs-primary);
+    background: #EBF2FF;
+    box-shadow: 0 0 0 3px rgba(11,95,255,.12);
+  }
+  .cs-card-opt-title { font-weight: 600; font-size: 15px; color: var(--cs-ink); }
+  .cs-card-opt-desc { font-size: 13px; color: var(--cs-muted); margin-top: 4px; line-height: 1.5; }
+
+  /* Chips (multi-select) */
+  .cs-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cs-chip {
+    background: #fff;
+    border: 1.5px solid var(--cs-border);
+    border-radius: 999px;
+    padding: 9px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--cs-text);
+    font-family: inherit;
+    transition: all .15s ease;
+  }
+  .cs-chip:hover { border-color: var(--cs-primary); }
+  .cs-chip.selected {
+    background: var(--cs-primary);
+    border-color: var(--cs-primary);
+    color: #fff;
+  }
+  .cs-chip-helper { font-size: 13px; color: var(--cs-muted); margin-top: 14px; }
+
+  /* Segmented */
+  .cs-segmented {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .cs-seg {
+    background: #fff;
+    border: 1.5px solid var(--cs-border);
+    border-radius: var(--cs-radius-sm);
+    padding: 18px 16px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    transition: all .15s ease;
+  }
+  .cs-seg:hover { border-color: var(--cs-primary); background: #F5F9FF; }
+  .cs-seg.selected {
+    border-color: var(--cs-primary);
+    background: #EBF2FF;
+    box-shadow: 0 0 0 3px rgba(11,95,255,.12);
+  }
+  .cs-seg-title { font-weight: 600; color: var(--cs-ink); font-size: 15px; }
+  .cs-seg-desc { color: var(--cs-muted); font-size: 12px; margin-top: 4px; }
+
+  /* Inputs */
+  .cs-field { margin-bottom: 18px; }
+  .cs-field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cs-ink);
+    margin-bottom: 6px;
+  }
+  .cs-input, .cs-textarea {
+    width: 100%;
+    border: 1.5px solid var(--cs-border);
+    border-radius: var(--cs-radius-sm);
+    padding: 12px 14px;
+    font-size: 15px;
+    font-family: inherit;
+    color: var(--cs-text);
+    background: #fff;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .cs-input:focus, .cs-textarea:focus {
+    outline: none;
+    border-color: var(--cs-primary);
+    box-shadow: 0 0 0 3px rgba(11,95,255,.12);
+  }
+  .cs-textarea { resize: vertical; min-height: 90px; }
+
+  /* Footer / nav */
+  .cs-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 28px;
+    padding-top: 24px;
+    border-top: 1px solid var(--cs-border);
+  }
+  .cs-btn {
+    border-radius: var(--cs-radius-sm);
+    padding: 12px 22px;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    transition: all .15s ease;
+  }
+  .cs-btn-primary {
+    background: var(--cs-primary);
+    color: #fff;
+  }
+  .cs-btn-primary:hover { background: var(--cs-primary-dark); }
+  .cs-btn-primary:disabled { background: var(--cs-border-strong); cursor: not-allowed; }
+  .cs-btn-ghost {
+    background: transparent;
+    color: var(--cs-muted);
+    border: 1.5px solid var(--cs-border);
+  }
+  .cs-btn-ghost:hover { color: var(--cs-text); border-color: var(--cs-border-strong); }
+  .cs-btn-link {
+    background: transparent;
+    color: var(--cs-primary);
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+  }
+
+  /* Welcome */
+  .cs-welcome { text-align: center; padding: 40px 20px 20px; }
+  .cs-welcome-eyebrow {
+    color: var(--cs-primary);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .cs-welcome h1 {
+    font-size: 36px;
+    color: var(--cs-ink);
+    line-height: 1.15;
+    margin: 14px 0 16px;
+    font-weight: 800;
+  }
+  .cs-welcome p {
+    color: var(--cs-muted);
+    font-size: 16px;
+    line-height: 1.6;
+    max-width: 540px;
+    margin: 0 auto 28px;
+  }
+  .cs-welcome-meta {
+    display: flex;
+    justify-content: center;
+    gap: 28px;
+    margin: 28px 0;
+    flex-wrap: wrap;
+  }
+  .cs-welcome-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--cs-muted);
+  }
+  .cs-welcome-meta-icon {
+    width: 28px; height: 28px;
+    border-radius: 999px;
+    background: #EBF2FF;
+    color: var(--cs-primary);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+  }
+
+  /* Done page */
+  .cs-done-hero { text-align: center; margin-bottom: 28px; }
+  .cs-done-check {
+    width: 64px; height: 64px; margin: 0 auto 16px;
+    border-radius: 999px;
+    background: #DCFCE7;
+    color: var(--cs-success);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 700;
+  }
+  .cs-done-hero h2 { color: var(--cs-ink); font-size: 26px; margin: 0 0 8px; }
+  .cs-done-hero p { color: var(--cs-muted); margin: 0; }
+
+  .cs-download-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 28px 0;
+  }
+  @media (max-width: 600px) { .cs-download-row { grid-template-columns: 1fr; } }
+  .cs-download-btn {
+    background: #fff;
+    border: 1.5px solid var(--cs-primary);
+    color: var(--cs-primary);
+    border-radius: var(--cs-radius-sm);
+    padding: 18px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    font-size: 15px;
+    transition: all .15s;
+  }
+  .cs-download-btn:hover {
+    background: var(--cs-primary);
+    color: #fff;
+  }
+  .cs-download-btn small {
+    display: block;
+    font-weight: 500;
+    font-size: 12px;
+    opacity: .8;
+    margin-top: 4px;
+  }
+
+  .cs-preview-box {
+    border: 1px solid var(--cs-border);
+    border-radius: var(--cs-radius-sm);
+    background: #FAFBFD;
+    padding: 24px 28px;
+    margin: 24px 0;
+    max-height: 400px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--cs-text);
+  }
+  .cs-preview-box h3 {
+    color: var(--cs-ink);
+    font-size: 14px;
+    margin: 18px 0 6px;
+    font-weight: 700;
+  }
+  .cs-preview-box h3:first-child { margin-top: 0; }
+  .cs-preview-box p { margin: 0 0 10px; }
+
+  .cs-calendly-banner {
+    background: linear-gradient(135deg, var(--cs-primary), var(--cs-accent));
+    color: #fff;
+    border-radius: var(--cs-radius-sm);
+    padding: 24px 28px;
+    margin-top: 20px;
+    text-align: center;
+  }
+  .cs-calendly-banner h3 { margin: 0 0 6px; font-size: 18px; }
+  .cs-calendly-banner p { margin: 0 0 16px; opacity: .92; font-size: 14px; }
+  .cs-calendly-banner button {
+    background: #fff;
+    color: var(--cs-primary);
+    font-weight: 600;
+    border: none;
+    border-radius: var(--cs-radius-sm);
+    padding: 12px 22px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+  }
+
+  .cs-stub-note {
+    margin-top: 24px;
+    padding: 12px 16px;
+    background: #FFF8E1;
+    border: 1px solid #F4E4A1;
+    border-radius: var(--cs-radius-sm);
+    font-size: 12px;
+    color: #92400E;
+    line-height: 1.5;
+  }
+
+  .cs-confirm-banner {
+    background: #EBF2FF;
+    border: 1px solid #C7DAFF;
+    border-radius: var(--cs-radius-sm);
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+  }
+  .cs-confirm-banner-email { color: var(--cs-ink); font-weight: 600; word-break: break-all; }
+
+  .cs-error {
+    color: var(--cs-danger);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <img src="https://www.cloudstaff.com/wp-content/uploads/2023/11/Cloudstaff-Logo-Landscape-Keyline-255x74.png" alt="Cloudstaff">
+  <span class="preview-badge">AI Policy Builder · Free tool</span>
+</header>
+
+<div id="cs-policy-builder"></div>
+
+<script>
+/* ============================================================
+   Question schema
+   - Each entry is a step in the wizard.
+   - `condition: (a) => bool` skips a step when its predicate
+     evaluates false against current answers. This is the
+     branching engine.
+   ============================================================ */
+const STEPS = [
+  // --- Welcome screen (no answers collected) ---
+  { id: '_welcome', section: 'Start', type: 'welcome' },
+
+  // --- Intake (single combined screen) ---
+  {
+    id: '_intake',
+    section: 'About you',
+    type: 'multi',
+    title: 'Let’s start with the basics.',
+    help: 'We’ll use this to tailor your policy and email you the final document.',
+    fields: [
+      { id: 'name', label: 'Your name', type: 'text', required: true, placeholder: 'Jane Doe' },
+      { id: 'company', label: 'Company name', type: 'text', required: true, placeholder: 'Acme Pty Ltd' },
+      { id: 'email', label: 'Work email', type: 'email', required: true, placeholder: 'jane@acme.com' }
+    ]
+  },
+
+  // ============================================================
+  // Section 1 — About your business
+  // ============================================================
+  {
+    id: 'industry', section: 'Your business', type: 'cards',
+    title: 'Which industry best describes you?',
+    help: 'This drives industry-specific clauses (HIPAA, PCI-DSS, etc.).',
+    options: [
+      { value: 'healthcare', title: 'Healthcare', desc: 'Hospitals, clinics, telehealth, health-tech' },
+      { value: 'finance', title: 'Financial services', desc: 'Banking, lending, insurance, fintech' },
+      { value: 'legal', title: 'Legal', desc: 'Law firms, in-house counsel' },
+      { value: 'government', title: 'Government / public sector', desc: 'Federal, state, local agencies' },
+      { value: 'education', title: 'Education', desc: 'Schools, universities, edtech' },
+      { value: 'professional', title: 'Professional services', desc: 'Consulting, accounting, marketing' },
+      { value: 'technology', title: 'Technology / SaaS', desc: 'Software, platforms, IT services' },
+      { value: 'retail', title: 'Retail / e-commerce', desc: 'B2C product sales' },
+      { value: 'manufacturing', title: 'Manufacturing / logistics', desc: 'Production, supply chain' },
+      { value: 'other', title: 'Something else', desc: 'We’ll keep the policy industry-neutral' }
+    ]
+  },
+  {
+    id: 'headcount', section: 'Your business', type: 'cards', layout: 'two-col',
+    title: 'How many staff?',
+    options: [
+      { value: '1-10', title: '1 – 10' },
+      { value: '11-50', title: '11 – 50' },
+      { value: '51-250', title: '51 – 250' },
+      { value: '251-1000', title: '251 – 1,000' },
+      { value: '1001-5000', title: '1,001 – 5,000' },
+      { value: '5000+', title: '5,000+' }
+    ]
+  },
+  {
+    id: 'countries', section: 'Your business', type: 'chips',
+    title: 'Where do you operate?',
+    help: 'Select all that apply. This drives GDPR / CCPA / Australian Privacy Act / Philippine Data Privacy Act clauses.',
+    options: [
+      { value: 'au', label: 'Australia' },
+      { value: 'nz', label: 'New Zealand' },
+      { value: 'ph', label: 'Philippines' },
+      { value: 'us', label: 'United States' },
+      { value: 'ca-state', label: 'California specifically' },
+      { value: 'uk', label: 'United Kingdom' },
+      { value: 'eu', label: 'European Union' },
+      { value: 'ca', label: 'Canada' },
+      { value: 'sg', label: 'Singapore' },
+      { value: 'in', label: 'India' },
+      { value: 'other', label: 'Other' }
+    ]
+  },
+  {
+    id: 'customerType', section: 'Your business', type: 'cards', layout: 'two-col',
+    title: 'Who do you serve?',
+    options: [
+      { value: 'b2b', title: 'Other businesses (B2B)' },
+      { value: 'b2c', title: 'Consumers (B2C)' },
+      { value: 'gov', title: 'Government' },
+      { value: 'mixed', title: 'A mix' }
+    ]
+  },
+  {
+    id: 'sensitiveData', section: 'Your business', type: 'chips',
+    title: 'What sensitive data do you handle?',
+    help: 'Select all that apply. Drives data-handling clauses.',
+    options: [
+      { value: 'pii', label: 'Personal information (PII)' },
+      { value: 'phi', label: 'Health records (PHI)' },
+      { value: 'payment', label: 'Payment / credit-card data' },
+      { value: 'financial', label: 'Financial records' },
+      { value: 'ip', label: 'Source code / IP' },
+      { value: 'classified', label: 'Government / classified' },
+      { value: 'none', label: 'None of these' }
+    ]
+  },
+
+  // ============================================================
+  // Section 2 — AI today
+  // ============================================================
+  {
+    id: 'existingPolicy', section: 'AI today', type: 'cards',
+    title: 'Do you have an AI policy already?',
+    options: [
+      { value: 'none', title: 'No — starting from scratch' },
+      { value: 'informal', title: 'Informal guidance', desc: 'Verbal rules, scattered docs' },
+      { value: 'draft', title: 'A draft we’d like to replace' },
+      { value: 'formal', title: 'A formal policy we’re updating' }
+    ]
+  },
+  {
+    id: 'currentTools', section: 'AI today', type: 'chips',
+    title: 'Which AI tools are in use today?',
+    help: 'Select all that apply. We’ll list these as approved tools (or flag gaps).',
+    options: [
+      { value: 'chatgpt', label: 'ChatGPT' },
+      { value: 'claude', label: 'Claude' },
+      { value: 'gemini', label: 'Gemini' },
+      { value: 'copilot', label: 'GitHub Copilot' },
+      { value: 'm365', label: 'Microsoft 365 Copilot' },
+      { value: 'perplexity', label: 'Perplexity' },
+      { value: 'cursor', label: 'Cursor / Windsurf' },
+      { value: 'midjourney', label: 'Midjourney / DALL·E' },
+      { value: 'custom', label: 'Custom in-house AI' },
+      { value: 'unknown', label: 'We don’t actually know' },
+      { value: 'none', label: 'None yet' }
+    ]
+  },
+  {
+    id: 'whoUsesAI', section: 'AI today', type: 'chips',
+    title: 'Who is using AI today?',
+    options: [
+      { value: 'eng', label: 'Engineering' },
+      { value: 'marketing', label: 'Marketing & Content' },
+      { value: 'sales', label: 'Sales' },
+      { value: 'support', label: 'Customer support' },
+      { value: 'hr', label: 'HR / Recruiting' },
+      { value: 'finance', label: 'Finance / Ops' },
+      { value: 'leadership', label: 'Leadership' },
+      { value: 'all', label: 'All staff' },
+      { value: 'unsure', label: 'We’re not sure' }
+    ]
+  },
+  {
+    id: 'shadowIT', section: 'AI today', type: 'cards',
+    title: 'Are staff using AI tools without official approval?',
+    help: '"Shadow AI" is one of the biggest policy gaps — be honest, this stays between us.',
+    options: [
+      { value: 'yes', title: 'Yes — we know it’s happening' },
+      { value: 'suspect', title: 'We suspect so' },
+      { value: 'no', title: 'No — we have controls in place' },
+      { value: 'unknown', title: 'We don’t know' }
+    ]
+  },
+
+  // ============================================================
+  // Section 3 — Use cases & risk surface
+  // ============================================================
+  {
+    id: 'useCases', section: 'Use cases', type: 'chips',
+    title: 'What do you want AI to enable?',
+    help: 'Select all that apply.',
+    options: [
+      { value: 'content', label: 'Content / marketing copy' },
+      { value: 'code', label: 'Code generation' },
+      { value: 'research', label: 'Research & summarisation' },
+      { value: 'support', label: 'Customer support / chatbots' },
+      { value: 'analytics', label: 'Data analysis' },
+      { value: 'translation', label: 'Translation' },
+      { value: 'meetings', label: 'Meeting transcription' },
+      { value: 'hiring', label: 'Hiring / candidate screening' },
+      { value: 'finance', label: 'Financial decisioning' },
+      { value: 'agents', label: 'Autonomous agents' }
+    ]
+  },
+  {
+    id: 'customerFacing', section: 'Use cases', type: 'cards', layout: 'two-col',
+    title: 'Will AI talk to your customers directly?',
+    help: 'Public chatbots, voice agents, automated email responses.',
+    options: [
+      { value: 'yes', title: 'Yes, today' },
+      { value: 'planning', title: 'Planning to' },
+      { value: 'no', title: 'No' },
+      { value: 'unsure', title: 'Not sure yet' }
+    ]
+  },
+  {
+    id: 'highStakes', section: 'Use cases', type: 'cards',
+    title: 'Will AI be used in decisions that affect individuals?',
+    help: 'Hiring, performance reviews, lending, insurance, eligibility — these are flagged "high-risk" under the EU AI Act.',
+    options: [
+      { value: 'yes', title: 'Yes', desc: 'We need EU AI Act high-risk language' },
+      { value: 'no', title: 'No', desc: 'AI only assists with non-impactful tasks' },
+      { value: 'unsure', title: 'We’re not sure', desc: 'Include the language as a safeguard' }
+    ]
+  },
+  {
+    id: 'sensitiveDataInput', section: 'Use cases', type: 'cards',
+    title: 'Will staff put sensitive data into AI tools?',
+    help: 'Customer records, contracts, source code, financial data, etc.',
+    options: [
+      { value: 'yes-controls', title: 'Yes — with controls', desc: 'Enterprise plans, DLP, no-training agreements' },
+      { value: 'yes-no-controls', title: 'Yes — but no controls in place yet' },
+      { value: 'no', title: 'No', desc: 'Sensitive data is prohibited from AI tools' },
+      { value: 'unsure', title: 'Not sure' }
+    ]
+  },
+
+  // ============================================================
+  // Section 4 — Risk posture
+  // ============================================================
+  {
+    id: 'stance', section: 'Risk posture', type: 'segmented',
+    title: 'What’s your overall stance?',
+    help: 'This sets the tone of the whole policy.',
+    options: [
+      { value: 'conservative', title: 'Conservative', desc: 'Block by default · approved use only' },
+      { value: 'balanced', title: 'Balanced', desc: 'Approved list · staff request access' },
+      { value: 'enabling', title: 'Enabling', desc: 'Open with guardrails · ship fast' }
+    ]
+  },
+  {
+    id: 'approvalProcess', section: 'Risk posture', type: 'cards',
+    title: 'How will new AI tools be approved?',
+    options: [
+      { value: 'central', title: 'Central review committee', desc: 'Security / Legal / IT sign-off' },
+      { value: 'manager', title: 'Direct manager approval' },
+      { value: 'self-serve', title: 'Self-serve from approved list' },
+      { value: 'none', title: 'No process today', desc: 'We need help defining one' }
+    ]
+  },
+  {
+    id: 'personalAccounts', section: 'Risk posture', type: 'cards', layout: 'two-col',
+    title: 'Are personal AI accounts allowed for work?',
+    help: 'e.g. an employee’s personal ChatGPT Plus subscription.',
+    options: [
+      { value: 'no', title: 'No', desc: 'Company accounts only' },
+      { value: 'case', title: 'Case-by-case', desc: 'With approval' },
+      { value: 'yes', title: 'Yes', desc: 'For non-sensitive use' }
+    ]
+  },
+
+  // ============================================================
+  // Section 5 — Governance
+  // ============================================================
+  {
+    id: 'owner', section: 'Governance', type: 'cards',
+    title: 'Who owns AI governance?',
+    options: [
+      { value: 'cto', title: 'CTO / CIO' },
+      { value: 'ciso', title: 'CISO / Head of Security' },
+      { value: 'legal', title: 'Legal / Compliance' },
+      { value: 'committee', title: 'Dedicated AI committee' },
+      { value: 'undefined', title: 'Not yet defined', desc: 'Recommend an owner' }
+    ]
+  },
+  {
+    id: 'training', section: 'Governance', type: 'cards', layout: 'two-col',
+    title: 'How will staff be trained?',
+    options: [
+      { value: 'mandatory', title: 'Mandatory training', desc: 'Annual + onboarding' },
+      { value: 'encouraged', title: 'Encouraged', desc: 'Resources provided, not enforced' },
+      { value: 'none', title: 'None planned' }
+    ]
+  },
+  {
+    id: 'frameworks', section: 'Governance', type: 'chips',
+    title: 'Any frameworks to align with?',
+    help: 'Optional. Adds compliance-mapping language.',
+    options: [
+      { value: 'iso42001', label: 'ISO/IEC 42001' },
+      { value: 'nist-airmf', label: 'NIST AI RMF' },
+      { value: 'eu-ai-act', label: 'EU AI Act' },
+      { value: 'soc2', label: 'SOC 2' },
+      { value: 'iso27001', label: 'ISO 27001' },
+      { value: 'none', label: 'None specific' }
+    ]
+  },
+
+  // ============================================================
+  // Section 6 — Specifics (free text, all optional)
+  // ============================================================
+  {
+    id: '_specifics', section: 'Specifics (optional)', type: 'multi',
+    title: 'Anything specific to call out?',
+    help: 'Optional. Skip either or both — we’ll auto-fill from your earlier answers.',
+    fields: [
+      { id: 'prohibitions', type: 'textarea', label: 'Things you specifically want PROHIBITED',
+        placeholder: 'e.g. No AI use in performance reviews. No customer PII in any public AI tool.' },
+      { id: 'enabledItems', type: 'textarea', label: 'Things you specifically want ENABLED',
+        placeholder: 'e.g. GitHub Copilot for engineers. ChatGPT Enterprise for marketing.' }
+    ],
+    optional: true
+  },
+
+  // ============================================================
+  // Closing — confirm + book consult
+  // ============================================================
+  { id: '_confirm', section: 'Confirm', type: 'confirm' },
+  { id: '_done',    section: 'Your policy',  type: 'done' }
+];
+
+/* ============================================================
+   State
+   ============================================================ */
+const STATE = {
+  step: 0,
+  answers: {},
+  emailConfirmed: false
+};
+
+/* ============================================================
+   Step visibility — branching logic
+   ============================================================ */
+function isStepVisible(step, answers) {
+  if (step.condition && !step.condition(answers)) return false;
+  return true;
+}
+
+function visibleSteps() {
+  return STEPS.filter(s => isStepVisible(s, STATE.answers));
+}
+
+function totalVisible() { return visibleSteps().length; }
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+const root = document.getElementById('cs-policy-builder');
+
+function render() {
+  const vis = visibleSteps();
+  const step = vis[STATE.step] || vis[vis.length - 1];
+
+  let progressHtml = '';
+  if (step.type !== 'welcome' && step.type !== 'done') {
+    const pct = Math.round(((STATE.step) / (vis.length - 1)) * 100);
+    progressHtml = `
+      <div class="cs-progress-wrap">
+        <div class="cs-progress-row">
+          <span class="cs-progress-label">${escape(step.section)}</span>
+          <span class="cs-progress-step">Step ${STATE.step + 1} of ${vis.length}</span>
+        </div>
+        <div class="cs-progress-bar"><div class="cs-progress-fill" style="width:${pct}%"></div></div>
+      </div>`;
+  }
+
+  let body = '';
+  switch (step.type) {
+    case 'welcome': body = renderWelcome(); break;
+    case 'multi':   body = renderMulti(step); break;
+    case 'cards':   body = renderCards(step); break;
+    case 'chips':   body = renderChips(step); break;
+    case 'segmented': body = renderSegmented(step); break;
+    case 'confirm': body = renderConfirm(); break;
+    case 'done':    body = renderDone(); break;
+  }
+
+  root.innerHTML = progressHtml + `<div class="cs-card">${body}</div>`;
+
+  attachHandlers(step);
+}
+
+function renderWelcome() {
+  return `
+    <div class="cs-welcome">
+      <div class="cs-welcome-eyebrow">Free tool · 5 minutes</div>
+      <h1>Build your AI policy in minutes.</h1>
+      <p>Answer a series of questions and download a PDF + editable Word document tailored to your business — covering acceptable use, data handling, governance, and compliance.</p>
+      <div class="cs-welcome-meta">
+        <div class="cs-welcome-meta-item"><span class="cs-welcome-meta-icon">1</span> 22 questions, mostly point-and-click</div>
+        <div class="cs-welcome-meta-item"><span class="cs-welcome-meta-icon">2</span> PDF + Word download</div>
+        <div class="cs-welcome-meta-item"><span class="cs-welcome-meta-icon">3</span> Optional: 30-min review with our team</div>
+      </div>
+      <button class="cs-btn cs-btn-primary" data-action="next">Get started →</button>
+    </div>`;
+}
+
+function renderMulti(step) {
+  const fields = step.fields.map(f => {
+    const val = STATE.answers[f.id] || '';
+    const tag = f.type === 'textarea'
+      ? `<textarea class="cs-textarea" data-field="${f.id}" placeholder="${escape(f.placeholder || '')}">${escape(val)}</textarea>`
+      : `<input class="cs-input" type="${f.type}" data-field="${f.id}" placeholder="${escape(f.placeholder || '')}" value="${escape(val)}">`;
+    return `<div class="cs-field"><label class="cs-field-label">${escape(f.label)}${f.required ? '' : ' <span style="color:var(--cs-muted);font-weight:400">(optional)</span>'}</label>${tag}</div>`;
+  }).join('');
+  return `
+    <span class="cs-section-tag">${escape(step.section)}</span>
+    <h2 class="cs-q-title">${escape(step.title)}</h2>
+    ${step.help ? `<p class="cs-q-help">${escape(step.help)}</p>` : ''}
+    ${fields}
+    ${footerNav(step)}
+  `;
+}
+
+function renderCards(step) {
+  const sel = STATE.answers[step.id];
+  const opts = step.options.map(o => `
+    <button class="cs-card-opt ${sel === o.value ? 'selected' : ''}" data-value="${escape(o.value)}">
+      <div class="cs-card-opt-title">${escape(o.title)}</div>
+      ${o.desc ? `<div class="cs-card-opt-desc">${escape(o.desc)}</div>` : ''}
+    </button>`).join('');
+  return `
+    <span class="cs-section-tag">${escape(step.section)}</span>
+    <h2 class="cs-q-title">${escape(step.title)}</h2>
+    ${step.help ? `<p class="cs-q-help">${escape(step.help)}</p>` : ''}
+    <div class="cs-cards ${step.layout === 'two-col' ? 'two-col' : ''}">${opts}</div>
+    ${footerNav(step)}
+  `;
+}
+
+function renderChips(step) {
+  const sel = STATE.answers[step.id] || [];
+  const opts = step.options.map(o => `
+    <button class="cs-chip ${sel.includes(o.value) ? 'selected' : ''}" data-value="${escape(o.value)}">${escape(o.label)}</button>
+  `).join('');
+  return `
+    <span class="cs-section-tag">${escape(step.section)}</span>
+    <h2 class="cs-q-title">${escape(step.title)}</h2>
+    ${step.help ? `<p class="cs-q-help">${escape(step.help)}</p>` : ''}
+    <div class="cs-chips">${opts}</div>
+    <p class="cs-chip-helper">${sel.length ? `${sel.length} selected` : 'Click to select'}</p>
+    ${footerNav(step)}
+  `;
+}
+
+function renderSegmented(step) {
+  const sel = STATE.answers[step.id];
+  const opts = step.options.map(o => `
+    <button class="cs-seg ${sel === o.value ? 'selected' : ''}" data-value="${escape(o.value)}">
+      <div class="cs-seg-title">${escape(o.title)}</div>
+      ${o.desc ? `<div class="cs-seg-desc">${escape(o.desc)}</div>` : ''}
+    </button>`).join('');
+  return `
+    <span class="cs-section-tag">${escape(step.section)}</span>
+    <h2 class="cs-q-title">${escape(step.title)}</h2>
+    ${step.help ? `<p class="cs-q-help">${escape(step.help)}</p>` : ''}
+    <div class="cs-segmented">${opts}</div>
+    ${footerNav(step)}
+  `;
+}
+
+function renderConfirm() {
+  const a = STATE.answers;
+  return `
+    <span class="cs-section-tag">Almost done</span>
+    <h2 class="cs-q-title">Confirm and book your follow-up</h2>
+    <p class="cs-q-help">Quick check before we generate your policy and email it to you.</p>
+
+    <div class="cs-confirm-banner">
+      <div>We’ll email your policy to <span class="cs-confirm-banner-email">${escape(a.email || '')}</span></div>
+      <button class="cs-btn-link" data-action="edit-email">Edit</button>
+    </div>
+
+    <div class="cs-field">
+      <label class="cs-field-label">Direct phone number</label>
+      <input class="cs-input" type="tel" data-field="phone" placeholder="+61 4XX XXX XXX" value="${escape(a.phone || '')}">
+    </div>
+
+    <div class="cs-field">
+      <label class="cs-field-label">Would you like a 30-minute review with one of our teams?</label>
+      <div class="cs-cards">
+        ${[
+          { value:'policy', title:'AI Policy Team', desc:'Walk through the generated policy, refine it, plan rollout' },
+          { value:'dev',    title:'AI Development Team', desc:'Discuss building AI agents or integrating AI into your products' },
+          { value:'skip',   title:'No thanks', desc:'Just send me the policy' }
+        ].map(o => `
+          <button class="cs-card-opt ${a.consultType === o.value ? 'selected' : ''}" data-field="consultType" data-value="${o.value}">
+            <div class="cs-card-opt-title">${o.title}</div>
+            <div class="cs-card-opt-desc">${o.desc}</div>
+          </button>`).join('')}
+      </div>
+    </div>
+    ${footerNav({ id:'_confirm' }, 'Generate my policy')}
+  `;
+}
+
+function renderDone() {
+  const a = STATE.answers;
+  const sections = buildPolicySections(a);
+  const previewHtml = sections.map(s =>
+    `<h3>${escape(s.heading)}</h3>${s.body.split('\n\n').map(p => `<p>${escape(p)}</p>`).join('')}`
+  ).join('');
+
+  let consultHtml = '';
+  if (a.consultType === 'policy' || a.consultType === 'dev') {
+    const team = a.consultType === 'policy' ? 'AI Policy Team' : 'AI Development Team';
+    consultHtml = `
+      <div class="cs-calendly-banner">
+        <h3>Book your 30-min session with the ${team}</h3>
+        <p>Pick a slot that works for you.</p>
+        <button onclick="window.open('https://calendly.com/cloudstaff-ai-${a.consultType === 'policy' ? 'policy' : 'dev'}/30min','_blank')">Open Calendly</button>
+      </div>
+      <div class="cs-stub-note"><strong>Stub:</strong> in production this opens an inline Calendly embed for the ${team} routing rules.</div>
+    `;
+  }
+
+  return `
+    <div class="cs-done-hero">
+      <div class="cs-done-check">✓</div>
+      <h2>Your AI policy is ready, ${escape((a.name||'').split(' ')[0] || 'there')}.</h2>
+      <p>We’ve also emailed a copy to ${escape(a.email || '')}.</p>
+    </div>
+
+    <div class="cs-download-row">
+      <button class="cs-download-btn" data-action="download-pdf">↓ Download PDF<small>For sharing & printing</small></button>
+      <button class="cs-download-btn" data-action="download-docx">↓ Download Word (.docx)<small>Editable in Microsoft Word</small></button>
+    </div>
+
+    <div class="cs-preview-box">${previewHtml}</div>
+
+    ${consultHtml}
+
+    <div class="cs-stub-note"><strong>HubSpot stub:</strong> lead payload was logged to console (open DevTools to see it). In production this hits a Cloudflare Worker that posts to the HubSpot Forms API with the API key kept server-side.</div>
+  `;
+}
+
+function footerNav(step, primaryLabel) {
+  const isFirstReal = STATE.step === 1; // 0 = welcome
+  const last = STATE.step === visibleSteps().length - 2; // last before "done"
+  const label = primaryLabel || (last ? 'Continue' : 'Continue →');
+  return `
+    <div class="cs-foot">
+      <button class="cs-btn cs-btn-ghost" data-action="back" ${STATE.step === 0 ? 'style="visibility:hidden"' : ''}>← Back</button>
+      <button class="cs-btn cs-btn-primary" data-action="next" id="cs-next-btn">${label}</button>
+    </div>`;
+}
+
+/* ============================================================
+   Handlers
+   ============================================================ */
+function attachHandlers(step) {
+  // Card single-select
+  root.querySelectorAll('.cs-card-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.field || step.id;
+      STATE.answers[field] = btn.dataset.value;
+      render();
+    });
+  });
+
+  // Chips multi-select
+  root.querySelectorAll('.cs-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cur = STATE.answers[step.id] || [];
+      const v = btn.dataset.value;
+      // "none" is exclusive
+      let next;
+      if (v === 'none') {
+        next = cur.includes('none') ? [] : ['none'];
+      } else {
+        next = cur.filter(x => x !== 'none');
+        next = next.includes(v) ? next.filter(x => x !== v) : [...next, v];
+      }
+      STATE.answers[step.id] = next;
+      render();
+    });
+  });
+
+  // Segmented
+  root.querySelectorAll('.cs-seg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      STATE.answers[step.id] = btn.dataset.value;
+      render();
+    });
+  });
+
+  // Inputs
+  root.querySelectorAll('[data-field]').forEach(inp => {
+    if (inp.tagName === 'INPUT' || inp.tagName === 'TEXTAREA') {
+      inp.addEventListener('input', () => {
+        STATE.answers[inp.dataset.field] = inp.value;
+      });
+    }
+  });
+
+  // Nav
+  root.querySelectorAll('[data-action="next"]').forEach(b => b.addEventListener('click', goNext));
+  root.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', goBack));
+  root.querySelectorAll('[data-action="edit-email"]').forEach(b => b.addEventListener('click', () => {
+    STATE.step = 1; // back to intake
+    render();
+  }));
+  const dl = root.querySelector('[data-action="download-pdf"]');
+  if (dl) dl.addEventListener('click', downloadPDF);
+  const dw = root.querySelector('[data-action="download-docx"]');
+  if (dw) dw.addEventListener('click', downloadDOCX);
+}
+
+function goNext() {
+  const vis = visibleSteps();
+  const step = vis[STATE.step];
+  if (!validateStep(step)) return;
+
+  // If we're moving to the done step, fire the lead-capture stub.
+  if (vis[STATE.step + 1] && vis[STATE.step + 1].type === 'done') {
+    submitToHubSpot(STATE.answers);
+  }
+
+  if (STATE.step < vis.length - 1) {
+    STATE.step++;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    render();
+  }
+}
+function goBack() {
+  if (STATE.step > 0) { STATE.step--; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+}
+
+function validateStep(step) {
+  if (step.type === 'multi') {
+    for (const f of step.fields) {
+      if (f.required && !STATE.answers[f.id]) {
+        alert(`Please fill in: ${f.label}`);
+        return false;
+      }
+      if (f.type === 'email' && STATE.answers[f.id] && !/.+@.+\..+/.test(STATE.answers[f.id])) {
+        alert('Please enter a valid email address.');
+        return false;
+      }
+    }
+    return true;
+  }
+  if (step.type === 'cards' || step.type === 'segmented') {
+    if (step.optional) return true;
+    if (!STATE.answers[step.id]) { alert('Please pick an option.'); return false; }
+    return true;
+  }
+  if (step.type === 'chips') {
+    if (step.optional) return true;
+    const v = STATE.answers[step.id] || [];
+    if (!v.length) { alert('Please pick at least one option.'); return false; }
+    return true;
+  }
+  if (step.type === 'confirm') {
+    if (!STATE.answers.phone) { alert('Please enter your phone number.'); return false; }
+    if (!STATE.answers.consultType) { alert('Please pick a follow-up option (or "No thanks").'); return false; }
+    return true;
+  }
+  return true;
+}
+
+/* ============================================================
+   HubSpot stub
+   ============================================================ */
+function submitToHubSpot(payload) {
+  console.log('%c[HubSpot stub] lead payload', 'color:#0B5FFF;font-weight:bold', payload);
+  console.log('In production: POST → https://policybuilder.cloudstaff.ai/api/lead → Cloudflare Worker → HubSpot Forms API');
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+function escape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function has(arr, v) { return Array.isArray(arr) && arr.includes(v); }
+function any(arr, vs) { return Array.isArray(arr) && vs.some(v => arr.includes(v)); }
+
+/* ============================================================
+   Policy template — conditional sections
+   ============================================================ */
+function buildPolicySections(a) {
+  const company = a.company || '[Company]';
+  const today = new Date().toLocaleDateString('en-AU', { year: 'numeric', month: 'long', day: 'numeric' });
+  const sections = [];
+
+  // -- Header info
+  sections.push({
+    heading: `AI Use Policy — ${company}`,
+    body: `Effective date: ${today}\nOwner: ${ownerName(a.owner)}\nClassification: Internal`
+  });
+
+  // 1. Purpose & Scope
+  sections.push({
+    heading: '1. Purpose and Scope',
+    body:
+`This policy establishes guidelines for the responsible use of artificial intelligence (AI) tools and systems at ${company}.
+
+It applies to all employees, contractors, and third parties who use AI tools — including generative AI, AI assistants, AI agents, and AI-augmented services — in connection with company business${countriesPhrase(a.countries) ? ' across ' + countriesPhrase(a.countries) : ''}.
+
+The policy covers both company-provided AI tools and any AI capability accessed through third-party services, including AI features embedded in productivity, communication, and development platforms.`
+  });
+
+  // 2. Definitions
+  sections.push({
+    heading: '2. Definitions',
+    body:
+`AI Tool — any software application or service that uses machine learning, natural language processing, computer vision, or generative models to produce outputs, recommendations, or actions.
+
+Generative AI — AI systems that create new content (text, code, images, audio, video) based on patterns learned from training data.
+
+High-Risk AI Use — any deployment of AI in decisions that materially affect a person's rights, opportunities, employment, finances, health, or legal status.
+
+Sensitive Data — any data classified as personal, confidential, regulated, or proprietary, including ${sensitiveList(a.sensitiveData)}.
+
+Approved AI Tool — an AI tool that has been reviewed and authorised for use under the process set out in Section 5.`
+  });
+
+  // 3. Roles & Responsibilities
+  sections.push({
+    heading: '3. Roles and Responsibilities',
+    body: rolesBody(a)
+  });
+
+  // 4. Acceptable Use
+  sections.push({
+    heading: '4. Acceptable Use',
+    body: acceptableUseBody(a)
+  });
+
+  // 5. Approved Tools & Approval Process
+  sections.push({
+    heading: '5. Approved Tools and the Approval Process',
+    body: approvalBody(a)
+  });
+
+  // 6. Personal AI accounts
+  sections.push({
+    heading: '6. Personal AI Accounts',
+    body: personalAccountBody(a)
+  });
+
+  // 7. Data Handling
+  sections.push({
+    heading: '7. Data Handling and Confidentiality',
+    body: dataHandlingBody(a)
+  });
+
+  // 8. Customer-Facing AI (conditional)
+  if (a.customerFacing === 'yes' || a.customerFacing === 'planning') {
+    sections.push({
+      heading: '8. Customer-Facing AI',
+      body:
+`AI systems that interact directly with customers — including chatbots, voice agents, and automated communications — must:
+
+• Clearly disclose that the customer is interacting with an AI system before any substantive exchange.
+• Provide a path to a human agent on request.
+• Be tested against representative inputs before launch and monitored for hallucinations, bias, and unsafe outputs.
+• Log interactions for at least 12 months, subject to applicable privacy law.
+• Avoid making definitive statements on legal, medical, or financial matters unless the system has been specifically certified for that domain.
+
+Marketing, product, and support owners are jointly accountable for the behaviour of customer-facing AI in their area.`
+    });
+  }
+
+  // 9. High-stakes decisions (conditional)
+  if (a.highStakes === 'yes' || a.highStakes === 'unsure') {
+    sections.push({
+      heading: '9. High-Risk and Decisional AI',
+      body:
+`AI systems used in decisions that materially affect individuals — including hiring, promotion, performance management, lending, insurance, eligibility, or pricing — are treated as high-risk under this policy and aligned with the EU AI Act's high-risk system requirements${has(a.frameworks,'eu-ai-act') ? '' : ' as a precautionary baseline'}.
+
+For any high-risk AI use, ${company} will:
+
+• Maintain documentation of the system's purpose, training data sources (where available), and known limitations.
+• Require human review and sign-off on AI-generated decisions before they take effect.
+• Test for and monitor disparate impact across protected characteristics.
+• Provide affected individuals with notice that AI was used and a route to contest the decision.
+• Conduct an impact assessment before deployment and on every material change.
+
+AI must never be the sole decision-maker on hiring, dismissal, performance ratings, or denial of a customer-facing service.`
+    });
+  }
+
+  // 10. Industry & Geographic compliance
+  const compliance = complianceBody(a);
+  if (compliance) sections.push({ heading: '10. Industry and Regulatory Compliance', body: compliance });
+
+  // 11. Training & Awareness
+  sections.push({
+    heading: '11. Training and Awareness',
+    body: trainingBody(a)
+  });
+
+  // 12. Incident Response
+  sections.push({
+    heading: '12. AI Incident Response',
+    body:
+`Any of the following must be reported to ${ownerName(a.owner)} within 24 hours of discovery:
+
+• Sensitive data inadvertently shared with an AI system.
+• An AI output that caused, or could plausibly cause, harm to a customer, employee, or third party.
+• A suspected jailbreak, prompt injection, or misuse of a company AI tool.
+• Significant hallucinations or factual errors in AI output that have been published or acted upon externally.
+
+Reports can be made via ${a.owner === 'undefined' ? '[reporting channel — to be defined]' : 'the standard security incident channel'}. Staff who report in good faith will not be penalised, even if they were partially at fault.
+
+A post-incident review will be conducted for any incident that affects customers or external parties.`
+  });
+
+  // 13. Monitoring & Audit
+  sections.push({
+    heading: '13. Monitoring and Audit',
+    body: monitoringBody(a)
+  });
+
+  // 14. Framework Alignment (conditional)
+  const framework = frameworkBody(a);
+  if (framework) sections.push({ heading: '14. Framework Alignment', body: framework });
+
+  // 15. Specific Provisions (conditional)
+  if ((a.prohibitions && a.prohibitions.trim()) || (a.enabledItems && a.enabledItems.trim())) {
+    let body = '';
+    if (a.prohibitions && a.prohibitions.trim()) {
+      body += `Prohibited uses called out by ${company}:\n\n${a.prohibitions.trim()}\n\n`;
+    }
+    if (a.enabledItems && a.enabledItems.trim()) {
+      body += `Specifically permitted uses:\n\n${a.enabledItems.trim()}`;
+    }
+    sections.push({ heading: '15. Specific Provisions', body: body.trim() });
+  }
+
+  // 16. Policy Review
+  const reviewNo = sections.length; // dynamic numbering
+  sections.push({
+    heading: `${(a.prohibitions || a.enabledItems) ? '16' : '15'}. Policy Review and Amendment`,
+    body:
+`This policy will be reviewed at least annually and updated whenever:
+
+• A new class of AI tool is introduced into ${company} operations.
+• A material regulatory change occurs in any jurisdiction where ${company} operates.
+• An AI incident reveals a gap in the policy.
+
+The policy owner (${ownerName(a.owner)}) is responsible for initiating review. All staff are encouraged to suggest improvements at any time.
+
+Policy version: 1.0 — generated ${today}.`
+  });
+
+  return sections;
+}
+
+/* === Conditional helpers === */
+function ownerName(o) {
+  return ({
+    cto: 'Chief Technology Officer',
+    ciso: 'Chief Information Security Officer',
+    legal: 'Head of Legal & Compliance',
+    committee: 'AI Governance Committee',
+    undefined: '[AI Governance Owner — to be assigned]'
+  })[o] || '[AI Governance Owner — to be assigned]';
+}
+
+function countriesPhrase(arr) {
+  if (!arr || !arr.length) return '';
+  const map = { au:'Australia', nz:'New Zealand', ph:'the Philippines', us:'the United States', 'ca-state':'California', uk:'the United Kingdom', eu:'the European Union', ca:'Canada', sg:'Singapore', in:'India', other:'other operating regions' };
+  const named = arr.map(c => map[c]).filter(Boolean);
+  if (named.length === 1) return named[0];
+  if (named.length === 2) return named.join(' and ');
+  return named.slice(0,-1).join(', ') + ', and ' + named[named.length-1];
+}
+
+function sensitiveList(arr) {
+  if (!arr || !arr.length || arr.includes('none')) return 'personal information, financial records, and proprietary business data';
+  const map = { pii:'personal information (PII)', phi:'protected health information (PHI)', payment:'payment-card data', financial:'financial records', ip:'source code and intellectual property', classified:'classified or government-controlled information' };
+  return arr.map(s => map[s]).filter(Boolean).join(', ');
+}
+
+function rolesBody(a) {
+  const owner = ownerName(a.owner);
+  let body = `${owner} is accountable for the AI governance program at ${a.company || '[Company]'}, including policy maintenance, tool approval, and incident response.\n\n`;
+
+  body += `All staff and contractors are responsible for:\n\n`;
+  body += `• Using only approved AI tools for company work.\n`;
+  body += `• Following the data-handling rules in Section 7.\n`;
+  body += `• Reporting AI-related incidents promptly.\n`;
+  body += `• Completing required training (Section 11).`;
+
+  if (a.approvalProcess === 'central') {
+    body += `\n\nA central review committee, chaired by ${owner}, evaluates new AI tools before they are approved for use. The committee includes representatives from Security, Legal, and IT.`;
+  } else if (a.approvalProcess === 'manager') {
+    body += `\n\nDirect managers are responsible for reviewing and approving AI tool requests from their team members, in consultation with ${owner} for any tool that handles sensitive data.`;
+  }
+  return body;
+}
+
+function acceptableUseBody(a) {
+  const stance = a.stance || 'balanced';
+  const intro = ({
+    conservative: `${a.company || '[Company]'} takes a conservative posture: AI tools may only be used where they have been expressly approved for a specific purpose, and only by staff who have completed the relevant training. When in doubt, do not use an AI tool — ask first.`,
+    balanced:     `${a.company || '[Company]'} encourages the productive use of AI within clear guardrails. Staff may use any AI tool from the approved list (Section 5) for company work that does not involve sensitive data, and may request the addition of new tools through the approval process.`,
+    enabling:     `${a.company || '[Company]'} actively encourages staff to experiment with AI tools to improve productivity, quality, and creativity. The default posture is "yes, with guardrails" — staff should choose the right tool for the job, follow the rules in this policy, and ask if unsure.`
+  })[stance];
+
+  const general = `\n\nIn all cases, staff must:\n\n• Not enter sensitive data (Section 7) into an AI tool unless that tool is explicitly approved for that data class.\n• Treat AI output as a draft, not a final answer — verify facts, citations, calculations, and code before relying on it.\n• Not present AI-generated work as solely human-authored where attribution matters (e.g. published articles, certifications, academic submissions).\n• Not use AI tools for any purpose that would be unethical, illegal, or contrary to ${a.company || '[Company]'} values if a human did it.`;
+
+  return intro + general;
+}
+
+function approvalBody(a) {
+  let body = '';
+  const tools = a.currentTools || [];
+  const knownTools = tools.filter(t => !['none','unknown'].includes(t));
+
+  if (knownTools.length) {
+    const labels = { chatgpt:'ChatGPT (OpenAI)', claude:'Claude (Anthropic)', gemini:'Gemini (Google)', copilot:'GitHub Copilot', m365:'Microsoft 365 Copilot', perplexity:'Perplexity', cursor:'Cursor / Windsurf', midjourney:'Midjourney / DALL·E', custom:'In-house AI systems' };
+    body += `The following tools are currently in use at ${a.company || '[Company]'} and are approved subject to the data-handling rules in Section 7:\n\n`;
+    body += knownTools.map(t => `• ${labels[t] || t}`).join('\n');
+    body += `\n\n`;
+  }
+
+  if (a.approvalProcess === 'central') {
+    body += `New AI tools must be requested through the central review committee. The request must include the intended use case, data classes involved, vendor security posture (SOC 2 / ISO 27001 / equivalent), data-handling terms (training opt-out, data residency, retention), and a named business owner. The committee responds within 10 business days.`;
+  } else if (a.approvalProcess === 'manager') {
+    body += `New AI tools must be approved by the requestor's direct manager. Tools that will handle sensitive data require additional sign-off from ${ownerName(a.owner)}.`;
+  } else if (a.approvalProcess === 'self-serve') {
+    body += `Staff may self-serve any tool on the approved list above. Adding new tools requires a request to ${ownerName(a.owner)}.`;
+  } else {
+    body += `An approval process is being established. Until it is published, staff must check with ${ownerName(a.owner)} before adopting any new AI tool for company work.`;
+  }
+
+  if (a.shadowIT === 'yes' || a.shadowIT === 'suspect') {
+    body += `\n\nAn amnesty period of 30 days from the effective date of this policy applies: any tool currently in use without approval may be disclosed without penalty so it can be reviewed and either approved or discontinued.`;
+  }
+  return body;
+}
+
+function personalAccountBody(a) {
+  return ({
+    no:   `Personal AI accounts (e.g. an employee's personal ChatGPT, Claude, or Gemini subscription) must not be used for any ${a.company || '[Company]'} work. Only company-issued accounts on approved tools may be used.`,
+    case: `Personal AI accounts may be used for ${a.company || '[Company]'} work only with prior written approval from ${ownerName(a.owner)}, and only for non-sensitive tasks. The default expectation is that staff use company-issued accounts.`,
+    yes:  `Personal AI accounts may be used for ${a.company || '[Company]'} work, provided that no sensitive data (Section 7) is entered and the tool's terms permit business use. Staff are responsible for ensuring the tool's privacy and data-handling settings are appropriate.`
+  })[a.personalAccounts] || `Use of personal AI accounts for company work is governed by the rules in Sections 4 and 7.`;
+}
+
+function dataHandlingBody(a) {
+  const sd = a.sensitiveData || [];
+  let body = `Sensitive data must be protected when using AI tools. The following data classes are explicitly in scope at ${a.company || '[Company]'}: ${sensitiveList(sd)}.\n\nGeneral rules:\n\n• Sensitive data may only be entered into an AI tool when (a) the tool is on the approved list, (b) the tool's terms guarantee that customer data is not used for model training, and (c) the tool's data residency satisfies any applicable regulation.\n• Public AI tools (free or consumer-tier ChatGPT, Claude, Gemini, etc.) must not receive sensitive data under any circumstance.\n• When a sensitive-data exposure occurs, follow the incident response process in Section 12 immediately.`;
+
+  if (a.sensitiveDataInput === 'yes-no-controls') {
+    body += `\n\nA priority action under this policy is to put technical controls in place — including data-loss prevention (DLP), enterprise-tier AI subscriptions with no-training agreements, and access logging — within 90 days of the policy's effective date.`;
+  } else if (a.sensitiveDataInput === 'yes-controls') {
+    body += `\n\nExisting controls (enterprise-tier subscriptions with no-training agreements, DLP, and access logging) must remain in place. Any new tool intended to receive sensitive data must demonstrate equivalent controls before approval.`;
+  } else if (a.sensitiveDataInput === 'no') {
+    body += `\n\nSensitive data is prohibited from all AI tools. Use of AI for tasks involving sensitive data must use redacted or synthetic inputs only.`;
+  }
+
+  if (has(sd, 'phi')) {
+    body += `\n\nProtected Health Information (PHI): only AI tools covered by a HIPAA Business Associate Agreement (BAA) may receive PHI.`;
+  }
+  if (has(sd, 'payment')) {
+    body += `\n\nPayment-card data: PCI-DSS scope applies. Staff must not enter cardholder data into any AI tool. AI use within the cardholder data environment requires explicit approval and security review.`;
+  }
+  if (has(sd, 'classified')) {
+    body += `\n\nClassified or government-controlled information: must only be processed in approved sovereign-cloud or air-gapped environments. Public AI services are prohibited for this data class.`;
+  }
+  return body;
+}
+
+function complianceBody(a) {
+  const parts = [];
+  const sd = a.sensitiveData || [];
+  const ct = a.countries || [];
+
+  if (a.industry === 'healthcare' || has(sd, 'phi')) {
+    parts.push(`Healthcare / HIPAA: AI tools used in connection with protected health information must be covered by a Business Associate Agreement. Staff must not paste patient identifiers or clinical notes into any AI tool not explicitly approved for PHI.`);
+  }
+  if (a.industry === 'finance' || has(sd, 'payment') || has(sd, 'financial')) {
+    parts.push(`Financial services: AI use in lending, underwriting, or financial advice is treated as high-risk (Section 9) and is subject to additional supervisory review. Cardholder data is governed by PCI-DSS and may not be entered into AI tools outside the approved cardholder data environment.`);
+  }
+  if (a.industry === 'legal') {
+    parts.push(`Legal services: AI-generated legal analysis must be reviewed by a qualified practitioner before being relied upon or shared with clients. Privileged client information must only be entered into AI tools that are covered by appropriate confidentiality terms.`);
+  }
+  if (a.industry === 'government') {
+    parts.push(`Public sector: AI use is subject to the agency's procurement and information-handling rules. Tools used to process records about members of the public must satisfy the relevant freedom-of-information and records-retention requirements.`);
+  }
+  if (a.industry === 'education') {
+    parts.push(`Education: student data is protected under FERPA (US) and equivalent regimes elsewhere. AI tools may not receive identifiable student information unless covered by an approved data-sharing agreement.`);
+  }
+
+  if (has(ct, 'eu') || has(ct, 'uk')) {
+    parts.push(`GDPR (EU) / UK GDPR: AI processing of personal data must have a lawful basis, respect data-subject rights (access, erasure, portability), and complete a Data Protection Impact Assessment (DPIA) where high-risk processing is involved. Cross-border transfers must use approved transfer mechanisms.`);
+  }
+  if (has(ct, 'ca-state') || has(ct, 'us')) {
+    parts.push(`United States — CCPA/CPRA (California): AI processing of California residents' personal information must support deletion, opt-out of sale/sharing, and the right to know. Sector-specific rules (e.g. CPRA, NY SHIELD) may apply additionally.`);
+  }
+  if (has(ct, 'au')) {
+    parts.push(`Australia: AI use must comply with the Privacy Act 1988 (Cth) and the Australian Privacy Principles (APPs), including notification of personal-information handling and reasonable security safeguards. The voluntary AI Ethics Framework is treated as guidance.`);
+  }
+  if (has(ct, 'ph')) {
+    parts.push(`Philippines: AI use involving personal information must comply with the Data Privacy Act 2012 (RA 10173) and NPC issuances, including registration of personal information processing systems and breach-notification obligations.`);
+  }
+  if (has(ct, 'sg')) {
+    parts.push(`Singapore: AI use must comply with the PDPA. Reference is made to the IMDA Model AI Governance Framework as best-practice guidance.`);
+  }
+
+  if (has(a.frameworks, 'eu-ai-act') || has(ct, 'eu')) {
+    parts.push(`EU AI Act: ${a.company || '[Company]'} commits to the AI Act's risk-tiering approach. Prohibited practices (social scoring, untargeted scraping for facial recognition, etc.) are forbidden. High-risk systems (Section 9) follow the documentation, human oversight, and post-market monitoring requirements set out in the Act.`);
+  }
+
+  return parts.length ? parts.join('\n\n') : '';
+}
+
+function trainingBody(a) {
+  return ({
+    mandatory: `All staff who use AI tools at work must complete:\n\n• An AI fundamentals and acceptable-use module within 30 days of joining.\n• An annual refresher covering policy updates, new approved tools, and lessons from any incidents.\n• Role-specific deep-dives for engineering, marketing, customer support, and HR where applicable.\n\nCompletion is tracked and reported to ${ownerName(a.owner)}.`,
+    encouraged: `Training resources are made available to all staff and managers are expected to encourage participation. Topics include acceptable use, prompt hygiene, sensitive-data handling, and recognising AI hallucinations. While not mandatory, staff working with sensitive data are strongly advised to complete the data-handling module.`,
+    none:       `No formal training program exists at the time of this policy's publication. Staff are expected to read this policy and ask ${ownerName(a.owner)} when in doubt. Establishing a training program is identified as a near-term priority.`
+  })[a.training] || `Staff are expected to read this policy and ask when unsure.`;
+}
+
+function monitoringBody(a) {
+  let body = `${a.company || '[Company]'} reserves the right to monitor the use of company-issued AI tools and accounts. Monitoring is proportionate, transparent, and conducted in line with applicable employment and privacy law.\n\nThe following are reviewed on at least a quarterly cadence:\n\n• Usage patterns of approved AI tools.\n• Reports of AI incidents and near-misses.\n• External regulatory developments and industry guidance.\n• The list of approved tools — additions, removals, and version changes.`;
+  if (a.stance === 'conservative') {
+    body += `\n\nGiven the conservative stance ${a.company || '[Company]'} has adopted, additional controls apply: prompts and outputs in tools handling sensitive data are logged, and access reviews are performed monthly.`;
+  }
+  return body;
+}
+
+function frameworkBody(a) {
+  const f = a.frameworks || [];
+  if (!f.length || (f.length === 1 && f[0] === 'none')) return '';
+  const parts = [];
+  if (f.includes('iso42001')) parts.push(`ISO/IEC 42001 (AI Management System): the controls in this policy are mapped to ISO/IEC 42001 requirements. Annual internal audits are scheduled to support certification.`);
+  if (f.includes('nist-airmf')) parts.push(`NIST AI Risk Management Framework: the four core functions (Govern, Map, Measure, Manage) shape the operating cadence — governance is owned by ${ownerName(a.owner)}; mapping and measurement happen at tool-approval and quarterly review; managing happens through the incident-response process.`);
+  if (f.includes('eu-ai-act')) parts.push(`EU AI Act: see Sections 9 and 10. ${a.company || '[Company]'} maintains the documentation, human-oversight, and post-market monitoring required for high-risk systems.`);
+  if (f.includes('soc2')) parts.push(`SOC 2: AI tool approvals, access reviews, and incident response are integrated with the existing SOC 2 control program.`);
+  if (f.includes('iso27001')) parts.push(`ISO 27001: AI tools are treated as third-party processors and assessed under the existing supplier risk-management program.`);
+  return parts.join('\n\n');
+}
+
+/* ============================================================
+   PDF & DOCX generators
+   ============================================================ */
+function downloadPDF() {
+  const a = STATE.answers;
+  const sections = buildPolicySections(a);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const margin = 50;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const maxW = pageW - margin * 2;
+  let y = margin;
+
+  // Title
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(11, 27, 58);
+  const title = `AI Use Policy — ${a.company || '[Company]'}`;
+  const titleLines = doc.splitTextToSize(title, maxW);
+  doc.text(titleLines, margin, y);
+  y += titleLines.length * 22 + 6;
+  doc.setDrawColor(11, 95, 255);
+  doc.setLineWidth(2);
+  doc.line(margin, y, margin + 60, y);
+  y += 18;
+
+  sections.slice(1).forEach(s => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(11, 27, 58);
+    const headLines = doc.splitTextToSize(s.heading, maxW);
+    if (y + headLines.length * 16 > pageH - margin) { doc.addPage(); y = margin; }
+    doc.text(headLines, margin, y);
+    y += headLines.length * 16 + 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10.5);
+    doc.setTextColor(31, 41, 55);
+    s.body.split('\n\n').forEach(p => {
+      const lines = doc.splitTextToSize(p, maxW);
+      lines.forEach(ln => {
+        if (y + 14 > pageH - margin) { doc.addPage(); y = margin; }
+        doc.text(ln, margin, y);
+        y += 14;
+      });
+      y += 6;
+    });
+    y += 8;
+  });
+
+  // Footer on last page
+  doc.setFontSize(8);
+  doc.setTextColor(107, 114, 128);
+  doc.text(`Generated by Cloudstaff AI Policy Builder · ${new Date().toLocaleDateString()}`, margin, pageH - 24);
+
+  doc.save(`AI-Policy-${(a.company || 'Company').replace(/[^A-Za-z0-9]+/g, '-')}.pdf`);
+}
+
+async function downloadDOCX() {
+  const a = STATE.answers;
+  const sections = buildPolicySections(a);
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = window.docx;
+
+  const children = [];
+
+  // Title
+  children.push(new Paragraph({
+    children: [new TextRun({ text: `AI Use Policy — ${a.company || '[Company]'}`, bold: true, size: 36, color: '0B1B3A' })],
+    spacing: { after: 200 }
+  }));
+
+  // Header info paragraph from sections[0]
+  sections[0].body.split('\n').forEach(ln => {
+    children.push(new Paragraph({
+      children: [new TextRun({ text: ln, color: '6B7280', size: 20 })]
+    }));
+  });
+  children.push(new Paragraph({ text: '', spacing: { after: 200 } }));
+
+  sections.slice(1).forEach(s => {
+    children.push(new Paragraph({
+      children: [new TextRun({ text: s.heading, bold: true, size: 26, color: '0B1B3A' })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 240, after: 120 }
+    }));
+    s.body.split('\n\n').forEach(p => {
+      // Detect bullet lines: lines starting with • or -
+      const lines = p.split('\n');
+      const isBullets = lines.every(l => /^[•\-]\s/.test(l.trim()));
+      if (isBullets) {
+        lines.forEach(l => {
+          children.push(new Paragraph({
+            text: l.trim().replace(/^[•\-]\s*/, ''),
+            bullet: { level: 0 },
+            spacing: { after: 60 }
+          }));
+        });
+      } else {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: p, size: 22, color: '1F2937' })],
+          spacing: { after: 140 }
+        }));
+      }
+    });
+  });
+
+  const doc = new Document({
+    creator: 'Cloudstaff AI Policy Builder',
+    title: `AI Use Policy — ${a.company || 'Company'}`,
+    sections: [{ properties: {}, children }]
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `AI-Policy-${(a.company || 'Company').replace(/[^A-Za-z0-9]+/g, '-')}.docx`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/* ============================================================
+   Boot
+   ============================================================ */
+render();
+</script>
+</body>
+</html>

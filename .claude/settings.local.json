@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.cloudstaff.com)",
+      "WebFetch(domain:cloudstaff.com)",
+      "Read(//c/Users/Lee\\(LeeW\\)Wade/Downloads/AIPolicyBuilder/**)",
+      "Read(//c/Users/Lee\\(LeeW\\)Wade/Downloads/.claude/worktrees/**)",
+      "Bash(git -C \"C:/Users/Lee\\(LeeW\\)Wade/Downloads/AIPolicyBuilder\" *)",
+      "Bash(./scripts/validate.sh)",
+      "PowerShell(./scripts/validate.ps1)",
+      "PowerShell(.\\scripts\\validate.ps1)"
+    ]
+  }
+}
