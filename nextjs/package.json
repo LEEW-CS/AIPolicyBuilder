@@ -1,0 +1,36 @@
+{
+  "name": "ai-policy-builder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudstaff AI Policy Builder — a free top-of-funnel marketing tool that walks a prospect through a structured set of questions and emits a tailored AI Use Policy as PDF + DOCX.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "format": "prettier --write \"**/*.{ts,tsx,md,css,json}\""
+  },
+  "dependencies": {
+    "docx": "^8.5.0",
+    "jspdf": "^2.5.1",
+    "next": "^15.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.15.0",
+    "eslint-config-next": "^15.0.3",
+    "postcss": "^8.4.49",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

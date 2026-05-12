@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Mirror of tailwind.config.ts colours, exposed as CSS variables so a
+     designer can override them per-environment without rebuilding. */
+  --cs-primary: 11 95 255;
+  --cs-primary-dark: 0 63 179;
+  --cs-accent: 0 194 215;
+  --cs-ink: 11 27 58;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Force inputs to inherit our font stack — Safari overrides otherwise. */
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+}
